@@ -142,8 +142,8 @@ class HYDRASR(nn.Module):
         dwt_in_channels = 3 * (1 + 3 * J)   # = 3*(1+6) = 21 for J=2
 
         if _WAVELETS_AVAILABLE:
-            self.dwt2  = DWTForward(J=J, wave=wave, mode='reflect')
-            self.idwt2 = DWTInverse(wave=wave, mode='reflect')
+            self.dwt2  = DWTForward(J=J, wave=wave, mode='periodization')
+            self.idwt2 = DWTInverse(wave=wave, mode='periodization')
         else:
             self.dwt2  = None
             self.idwt2 = None

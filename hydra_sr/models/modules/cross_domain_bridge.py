@@ -81,7 +81,7 @@ class CrossDomainBridge(nn.Module):
         dwt_out_channels = C_P * (1 + 3 * J)
 
         if _WAVELETS_AVAILABLE:
-            self.dwt  = DWTForward(J=J, wave=wave, mode='reflect')
+            self.dwt  = DWTForward(J=J, wave=wave, mode='periodization')
         else:
             self.dwt = None   # fallback: use average pooling
 

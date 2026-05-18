@@ -260,7 +260,10 @@ class AHNMambaBlock(nn.Module):
         # ── Step 4: NHS serialization ───────────────────────────────────
         idx, H_pad, W_pad = self._get_scan_idx(H, W, x.device)
         if H_pad != H or W_pad != W:
-            x_ssm_2d = F.pad(x_ssm_2d, (0, W_pad - W, 0, H_pad - H), mode='reflect')
+            # Use replicate padding as fallback when image is too small for reflect
+            pad_mode = 'reflect' if (H >= H_pad - H and W >= W_pad - W and H > 1 and W > 1) else 'replicate'
+            pad_mode = 'replicate'  # always use replicate to be safe with small inputs
+            x_ssm_2d = F.pad(x_ssm_2d, (0, W_pad - W, 0, H_pad - H), mode=pad_mode)
         N_pad = H_pad * W_pad
         x_seq = rearrange(x_ssm_2d, 'b d h w -> b d (h w)')     # (B, d_inner, N_pad)
         x_seq = hilbert_gather(x_seq.contiguous(), idx)           # NHS-ordered

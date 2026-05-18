@@ -1,0 +1,84 @@
+name: hydra_sr_stage1_geometry
+description: "Stage 1 — Geometry Lock. 400K iterations, bicubic degradation, Charbonnier loss."
+
+model:
+  scale: 4
+  dim_p: 96
+  dim_w: 64
+  n_mamba_p: 6
+  n_mamba_w: 4
+  n_nafblocks_s1: 4
+  n_transformer: 2
+  prompt_dim: 128
+  J: 2
+  wave: db4
+  use_checkpoint: true   # MANDATORY for 16GB cards at batch=8
+
+train:
+  dataset:
+    hr_root: /data/DF2K/HR
+    lr_root:  /data/DF2K/LR_bicubic/X4
+    patch_size: 64       # Stage 1 starts at 64, progresses to 96→128
+    scale: 4
+    batch_size: 32
+    num_workers: 8
+    use_real_degradation: false
+    real_deg_weight: 0.1   # 10% real even in Stage 1 to warm up degradation predictor
+
+  total_iter: 400000
+
+  optimizer:
+    type: AdamW
+    lr: 2.0e-4
+    betas: [0.9, 0.99]
+    weight_decay: 1.0e-4
+    mamba_weight_decay: 1.0e-5   # Differential WD: Mamba params get 10× lower WD
+
+  scheduler:
+    type: CosineAnnealing
+    eta_min: 1.0e-6
+    warmup_iter: 10000
+    warmup_lr: 1.0e-6
+
+  loss:
+    charbonnier: 1.0
+    degradation_pred: 0.1   # supervision for DegradationPredictor
+
+  ema:
+    decay: 0.999
+    update_every: 1
+    start_step: 0
+
+  grad_clip:
+    max_norm: 1.0
+    mamba_max_norm: 1.0   # separate clip for SSM params
+
+  # CutBlur patch curriculum (from implementation plan)
+  patch_curriculum:
+    - {iter: 0,      patch_size: 64}
+    - {iter: 150000, patch_size: 96}
+    - {iter: 300000, patch_size: 128}
+
+  # CDB warmup: clamp lam_p, lam_w to [0, 0] for first 5K iters
+  cdb_warmup_iters: 5000
+
+  amp:
+    enabled: true
+    dtype: bfloat16   # bf16 is MORE stable than fp16 for SSMs
+
+val:
+  dataset:
+    hr_root: /data/DIV2K/valid_HR
+    lr_root:  /data/DIV2K/valid_LR_bicubic/X4
+    patch_size: null   # full image validation
+    scale: 4
+  every: 5000
+  metrics: [psnr_y, ssim_y]
+  target_psnr: 32.5   # acceptance criterion for Week 4
+
+logging:
+  save_every: 10000
+  log_every: 100
+  use_wandb: true
+  wandb_project: hydra-sr
+  checkpoint_dir: ./checkpoints/stage1

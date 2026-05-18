@@ -1,0 +1,87 @@
+name: hydra_sr_stage3_perceptual
+description: "Stage 3 — Perceptual Training. 120K iterations, dynamic TSD+LPIPS distillation."
+
+model:
+  scale: 4
+  dim_p: 96
+  dim_w: 64
+  n_mamba_p: 6
+  n_mamba_w: 4
+  n_nafblocks_s1: 4
+  n_transformer: 2
+  prompt_dim: 128
+  J: 2
+  wave: db4
+  use_checkpoint: true
+
+  resume_from: ./checkpoints/stage2/best_ema.pth
+
+train:
+  dataset:
+    hr_root: /data/DF2K_RealLR200/HR
+    lr_root:  null
+    patch_size: 64
+    scale: 4
+    batch_size: 16    # smaller batch for Stage 3 (TSD adds memory)
+    num_workers: 8
+    use_real_degradation: true
+    real_deg_weight: 1.0
+
+  total_iter: 120000
+
+  optimizer:
+    type: AdamW
+    lr: 2.0e-5
+    betas: [0.9, 0.99]
+    weight_decay: 1.0e-4
+    mamba_weight_decay: 1.0e-5
+
+  scheduler:
+    type: CosineAnnealing
+    eta_min: 1.0e-8
+    warmup_iter: 1000
+
+  loss:
+    # Initial weights — DynamicWeighter adjusts λ_l1 and λ_tsd during training
+    l1_weight:     0.1
+    lpips_weight:  1.0
+    tsd_weight:    0.6
+    dtw_weight:    0.4
+    gan_weight:    0.1
+
+    # Dynamic weighter config
+    dynamic_weighter:
+      patience: 10000
+      delta_thr: 0.001
+      tsd_max: 2.0
+
+  # EMA-DiffWarmup: first 10K iters of Stage 3, use EMA-smoothed weights
+  # for teacher predictions to prevent distillation mode collapse
+  ema_diffwarmup_iters: 10000
+
+  ema:
+    decay: 0.999
+    update_every: 1
+
+  grad_clip:
+    max_norm: 1.0
+
+  amp:
+    enabled: true
+    dtype: bfloat16
+
+val:
+  dataset:
+    hr_root: /data/DIV2K/valid_HR
+    lr_root:  null
+    scale: 4
+  every: 5000
+  metrics: [psnr_y, ssim_y, lpips]
+  target_lpips: 0.135   # acceptance criterion for Week 7
+
+logging:
+  save_every: 5000
+  log_every: 50
+  use_wandb: true
+  wandb_project: hydra-sr
+  checkpoint_dir: ./checkpoints/stage3

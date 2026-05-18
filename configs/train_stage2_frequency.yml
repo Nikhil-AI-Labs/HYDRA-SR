@@ -1,0 +1,78 @@
+name: hydra_sr_stage2_frequency
+description: "Stage 2 — Frequency Lock. 250K iterations, mixed real degradation, FFL+WaveletL1 losses."
+
+model:
+  scale: 4
+  dim_p: 96
+  dim_w: 64
+  n_mamba_p: 6
+  n_mamba_w: 4
+  n_nafblocks_s1: 4
+  n_transformer: 2
+  prompt_dim: 128
+  J: 2
+  wave: db4
+  use_checkpoint: true
+
+  resume_from: ./checkpoints/stage1/best_ema.pth  # load Stage 1 weights
+
+train:
+  dataset:
+    hr_root: /data/DF2K_LSDIR/HR
+    lr_root:  null              # LR generated on-the-fly (real degradation)
+    patch_size: 64
+    scale: 4
+    batch_size: 32
+    num_workers: 8
+    use_real_degradation: true
+    real_deg_weight: 1.0    # 100% real degradation in Stage 2
+
+  total_iter: 250000
+
+  optimizer:
+    type: AdamW
+    lr: 5.0e-5
+    betas: [0.9, 0.99]
+    weight_decay: 1.0e-4
+    mamba_weight_decay: 1.0e-5
+
+  scheduler:
+    type: CosineAnnealing
+    eta_min: 1.0e-7
+    warmup_iter: 2000
+
+  loss:
+    l1_weight:  0.8
+    ffl_weight: 0.6    # Focal Frequency Loss
+    swt_weight: 0.3    # Wavelet L1 on SR vs HR
+    wl1_weight: 0.4    # Wavelet-domain L1 on W-stream output
+
+  # Smooth transition from Stage 1 loss (blend for first 5K iters)
+  transition_iters: 5000
+
+  ema:
+    decay: 0.999
+    update_every: 1
+
+  grad_clip:
+    max_norm: 1.0
+
+  amp:
+    enabled: true
+    dtype: bfloat16
+
+val:
+  dataset:
+    hr_root: /data/DIV2K/valid_HR
+    lr_root:  null     # real degradation for val too
+    scale: 4
+  every: 5000
+  metrics: [psnr_y, ssim_y, lpips]
+  target_psnr: 33.5   # acceptance criterion for Week 6
+
+logging:
+  save_every: 10000
+  log_every: 100
+  use_wandb: true
+  wandb_project: hydra-sr
+  checkpoint_dir: ./checkpoints/stage2

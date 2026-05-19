@@ -24,6 +24,7 @@ Engineering notes (Failure Mode #10):
 import os
 import sys
 import argparse
+import contextlib
 import logging
 from pathlib import Path
 
@@ -167,10 +168,14 @@ def train(cfg, args):
     optimizer, mamba_params, other_params = build_optimizer(raw_model, cfg)
     scheduler = build_scheduler(optimizer, cfg, cfg.train.total_iter)
 
-    # AMP scaler (use GradScaler only for fp16; bf16 doesn't need it)
-    use_amp = cfg.train.get('amp', {}).get('enabled', True)
-    amp_dtype = torch.bfloat16 if cfg.train.get('amp', {}).get('dtype', 'bfloat16') == 'bfloat16' else torch.float16
-    scaler = torch.cuda.amp.GradScaler() if (use_amp and amp_dtype == torch.float16) else None
+    # AMP: bfloat16 does NOT need GradScaler (only fp16 does)
+    use_amp   = cfg.train.get('amp', {}).get('enabled', True)
+    amp_dtype = (torch.bfloat16
+                 if cfg.train.get('amp', {}).get('dtype', 'bfloat16') == 'bfloat16'
+                 else torch.float16)
+    scaler    = (torch.amp.GradScaler('cuda')
+                 if (use_amp and amp_dtype == torch.float16)
+                 else None)
 
     # ── EMA ─────────────────────────────────────────────────────────────
     ema = EMA(raw_model, decay=cfg.train.ema.decay, update_every=cfg.train.ema.update_every)
@@ -261,11 +266,12 @@ def train(cfg, args):
         if deg_gt is not None:
             deg_gt = deg_gt.to(device, non_blocking=True)
 
-        # Forward pass
+        # Forward pass with AMP
         optimizer.zero_grad(set_to_none=True)
-
-        ctx = torch.cuda.amp.autocast(dtype=amp_dtype) if use_amp else torch.no_grad.__class__()
-        with torch.cuda.amp.autocast(dtype=amp_dtype) if use_amp else contextlib.nullcontext():
+        amp_ctx = (torch.amp.autocast('cuda', dtype=amp_dtype)
+                   if use_amp and device.type == 'cuda'
+                   else contextlib.nullcontext())
+        with amp_ctx:
             sr, aux = model(lr_img, return_aux=True)
             loss_dict = loss_fn(sr.float(), hr_img.float(),
                                 d_hat=aux.get('d_hat'), d_gt=deg_gt)
@@ -334,7 +340,6 @@ def train(cfg, args):
 
 
 def main():
-    import contextlib
     parser = argparse.ArgumentParser(description='HYDRA-SR Training')
     parser.add_argument('--config', type=str, required=True,
                         help='Path to config YAML (e.g., configs/train_stage1_geometry.yml)')

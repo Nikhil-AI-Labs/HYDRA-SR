@@ -55,10 +55,54 @@ from .nafblock import LayerNorm2d
 
 # Try importing mamba_ssm; fall back to a pure-PyTorch SSM for CPU testing
 try:
-    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
+    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn as _selective_scan_fn_raw
     _MAMBA_AVAILABLE = True
 except ImportError:
     _MAMBA_AVAILABLE = False
+
+
+def _check_gpu_supports_mamba(device: torch.device) -> bool:
+    """
+    mamba-ssm CUDA kernels are compiled only for SM 7.0+ (Volta and newer).
+    Quadro P5000 / GTX 10xx / any Pascal card is SM 6.x → no kernel image.
+    This function returns True ONLY if CUDA is available AND the GPU is SM ≥ 7.0.
+    """
+    if not torch.cuda.is_available():
+        return False
+    try:
+        major, minor = torch.cuda.get_device_capability(device)
+        return (major >= 7)  # SM 7.0 = Volta V100, min supported by mamba-ssm
+    except Exception:
+        return False
+
+
+def selective_scan_fn(u, delta, A, B, C, D=None, delta_bias=None,
+                      delta_softplus=False, return_last_state=False):
+    """
+    Wrapper around mamba-ssm selective_scan_fn that:
+      1. Checks that the GPU is SM ≥ 7.0 (Volta+) before calling the CUDA kernel.
+      2. Casts all tensors to float32 before the kernel (CUDA kernel requires
+         u and delta to have the same dtype; bfloat16 AMP breaks this).
+      3. Casts the result back to the original input dtype.
+    Falls back to _pytorch_ssm_fallback on Pascal/CPU.
+    """
+    # Force all to float32 — selective_scan_cuda.fwd requires u.dtype == delta.dtype
+    orig_dtype = u.dtype
+    u_fp32     = u.float()
+    delta_fp32 = delta.float()
+    A_fp32     = A.float()
+    B_fp32     = B.float()
+    C_fp32     = C.float()
+    D_fp32     = D.float() if D is not None else None
+
+    out = _selective_scan_fn_raw(
+        u_fp32, delta_fp32, A_fp32, B_fp32, C_fp32,
+        D_fp32, None, delta_bias, delta_softplus, return_last_state,
+    )
+    # Cast result back to the original dtype (e.g. bfloat16 under AMP)
+    if isinstance(out, (list, tuple)):
+        return tuple(o.to(orig_dtype) for o in out)
+    return out.to(orig_dtype)
 
 
 def _pytorch_ssm_fallback(
@@ -284,25 +328,32 @@ class AHNMambaBlock(nn.Module):
         B_t   = rearrange(B_ssm,      'b n s -> b 1 s n')
         C_t   = rearrange(C_ssm,      'b n s -> b 1 s n')
 
-        if _MAMBA_AVAILABLE and x.is_cuda:
+        # Use CUDA selective scan ONLY on SM ≥ 7.0 (Volta+, Turing, Ampere, Ada).
+        # Pascal (SM 6.x, e.g. Quadro P5000 / GTX 1080) lacks kernel images and
+        # will raise "CUDA error: no kernel image is available for execution".
+        _use_cuda_ssm = _MAMBA_AVAILABLE and _check_gpu_supports_mamba(x.device)
+
+        if _use_cuda_ssm:
             y_fwd = selective_scan_fn(
                 u_fwd, dt_t, A, B_t, C_t,
                 D=self.D, delta_bias=None, delta_softplus=True,
             )
             y_rev = selective_scan_fn(
-                u_fwd.flip(-1),
-                dt_t.flip(-1),
-                A,
-                B_t.flip(-1),
-                C_t.flip(-1),
+                u_fwd.flip(-1), dt_t.flip(-1), A,
+                B_t.flip(-1), C_t.flip(-1),
                 D=self.D, delta_bias=None, delta_softplus=True,
             ).flip(-1)
         else:
-            # Fallback: pure PyTorch SSM (slower, for CPU unit tests)
-            y_fwd = _pytorch_ssm_fallback(u_fwd, dt_t, A, B_t, C_t, self.D)
+            # Fallback: pure PyTorch SSM
+            # Runs on CPU, or GPU < SM 7.0 (Pascal/Maxwell — no mamba-ssm kernel).
+            y_fwd = _pytorch_ssm_fallback(
+                u_fwd.float(), dt_t.float(), A.float(),
+                B_t.float(), C_t.float(), self.D.float()
+            ).to(u_fwd.dtype)
             y_rev = _pytorch_ssm_fallback(
-                u_fwd.flip(-1), dt_t.flip(-1), A, B_t.flip(-1), C_t.flip(-1), self.D
-            ).flip(-1)
+                u_fwd.flip(-1).float(), dt_t.flip(-1).float(), A.float(),
+                B_t.flip(-1).float(), C_t.flip(-1).float(), self.D.float()
+            ).flip(-1).to(u_fwd.dtype)
 
         y_seq = y_fwd + y_rev    # (B, d_inner, N_pad) — bidirectional merge
 

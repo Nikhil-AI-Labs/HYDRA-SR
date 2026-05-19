@@ -74,12 +74,18 @@ def test_parameter_count():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_forward_batch8_64():
     """Standard training batch: 8×64×64 LR → 8×256×256 SR."""
+    sm_major, sm_minor = torch.cuda.get_device_capability(0)
+    print(f"\nGPU: {torch.cuda.get_device_name(0)} (SM {sm_major}.{sm_minor})")
+    if sm_major < 7:
+        print(f"  NOTE: SM < 7.0 — mamba-ssm CUDA kernel disabled; using PyTorch SSM fallback")
+
     model = HYDRASR().cuda()
     lr = torch.randn(8, 3, 64, 64, device='cuda')
-    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
         sr = model(lr)
-    assert sr.shape == (8, 3, 256, 256)
-    assert not torch.isnan(sr.float()).any()
+    assert sr.shape == (8, 3, 256, 256), f"Expected (8,3,256,256), got {sr.shape}"
+    assert not torch.isnan(sr.float()).any(), "NaN in SR output!"
+    assert not torch.isinf(sr.float()).any(), "Inf in SR output!"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
@@ -88,18 +94,23 @@ def test_4k_inference_memory():
     4K inference (LR=540×960) must fit in <24 GB peak VRAM.
     Uses gradient checkpointing to reduce activation memory.
     """
+    sm_major, sm_minor = torch.cuda.get_device_capability(0)
+    gpu_name = torch.cuda.get_device_name(0)
+    print(f"\nGPU: {gpu_name} (SM {sm_major}.{sm_minor})")
+
     model = HYDRASR(use_checkpoint=True).cuda().eval()
     lr = torch.randn(1, 3, 540, 960, device='cuda')
 
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
 
-    with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast('cuda', dtype=torch.bfloat16):
         sr = model(lr)
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9
-    print(f"\n4K inference peak VRAM: {peak_gb:.2f} GB")
-    assert sr.shape == (1, 3, 2160, 3840)
+    print(f"  4K inference peak VRAM: {peak_gb:.2f} GB")
+    assert sr.shape == (1, 3, 2160, 3840), f"Expected (1,3,2160,3840), got {sr.shape}"
+    assert not torch.isnan(sr.float()).any(), "NaN in 4K output!"
     assert peak_gb < 24.0, f"Peak VRAM {peak_gb:.2f} GB exceeds 24 GB limit!"
 
 

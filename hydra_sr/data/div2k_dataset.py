@@ -174,10 +174,22 @@ class DIV2KDataset(Dataset):
             lr, deg_vec = self.real_deg(hr)
         elif self.lr_files is not None:
             lr = read_img(self.lr_files[idx])
-            deg_vec = np.array([0.5, 0.0, 95.0, 1.0], dtype=np.float32)  # clean bicubic
+            # Clean bicubic degradation vector — normalized to match RealESRGANDegradation:
+            #   sigma_blur  / 5.0   →  0.0  (no blur on clean LR)
+            #   sigma_noise / 50.0  →  0.0  (no noise)
+            #   q_jpeg      / 100.0 →  0.95 (95% quality, i.e., nearly lossless)
+            #   downsample_factor   →  1.0
+            # See: hydra_sr/data/degradations.py, RealESRGANDegradation.__call__
+            deg_vec = np.array([0.0, 0.0, 0.95, 1.0], dtype=np.float32)  # clean bicubic
         else:
             lr = bicubic_downsample(hr, self.scale)
-            deg_vec = np.array([0.5, 0.0, 95.0, 1.0], dtype=np.float32)
+            # Clean bicubic degradation vector — normalized to match RealESRGANDegradation:
+            #   sigma_blur  / 5.0   →  0.0  (no blur)
+            #   sigma_noise / 50.0  →  0.0  (no noise)
+            #   q_jpeg      / 100.0 →  0.95 (near-lossless, no JPEG artifacts)
+            #   downsample_factor   →  1.0
+            # See: hydra_sr/data/degradations.py, RealESRGANDegradation.__call__
+            deg_vec = np.array([0.0, 0.0, 0.95, 1.0], dtype=np.float32)
 
         if self.train:
             hr, lr = paired_random_crop(hr, lr, self.patch_size * self.scale, self.scale)

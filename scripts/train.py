@@ -197,14 +197,30 @@ def train(cfg, args):
 
     # ── Dataset + DataLoader ─────────────────────────────────────────────
     train_cfg = cfg.train
+    ds_cfg    = train_cfg.dataset
+    aug_cfg   = ds_cfg.get('augmentation', {})
+
+    # Build patch curriculum from config  [(iter_threshold, patch_size), ...]
+    raw_curriculum = train_cfg.get('patch_curriculum', [])
+    patch_curriculum = [(entry['iter'], entry['patch_size'])
+                        for entry in raw_curriculum]
+
     train_dataset = DIV2KDataset(
-        hr_root=train_cfg.dataset.hr_root,
-        lr_root=train_cfg.dataset.get('lr_root', None),
-        patch_size=train_cfg.dataset.patch_size,
+        hr_root=ds_cfg.hr_root,
+        lr_root=ds_cfg.get('lr_root', None),
+        patch_size=ds_cfg.patch_size,
         scale=model_cfg.scale,
         train=True,
-        use_real_degradation=train_cfg.dataset.get('use_real_degradation', False),
-        real_deg_weight=train_cfg.dataset.get('real_deg_weight', 0.0),
+        use_real_degradation=ds_cfg.get('use_real_degradation', False),
+        real_deg_weight=ds_cfg.get('real_deg_weight', 0.0),
+        # Augmentation flags from config (all default True if not specified)
+        use_hflip=aug_cfg.get('use_hflip', True),
+        use_vflip=aug_cfg.get('use_vflip', True),
+        use_rotation=aug_cfg.get('use_rotation', True),
+        use_channel_shuffle=aug_cfg.get('use_channel_shuffle', True),
+        use_cutblur=aug_cfg.get('use_cutblur', True),
+        cutblur_prob=aug_cfg.get('cutblur_prob', 0.3),
+        patch_curriculum=patch_curriculum,
     )
 
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank) if use_ddp else None
@@ -251,6 +267,30 @@ def train(cfg, args):
     model.train()
 
     for step in range(start_step, total_iter):
+        # ── Progressive patch curriculum ─────────────────────────────────
+        # update the dataset's active patch size from the curriculum schedule
+        prev_patch = train_dataset.patch_size
+        train_dataset.set_iter(step)
+        if train_dataset.patch_size != prev_patch:
+            # Patch size changed — rebuild DataLoader (batch shape changes)
+            if is_main:
+                logger.info(
+                    f"Step {step}: patch_size {prev_patch} → {train_dataset.patch_size} "
+                    f"(LR: {train_dataset.patch_size}×{train_dataset.patch_size}, "
+                    f"HR: {train_dataset.patch_size*model_cfg.scale}×"
+                    f"{train_dataset.patch_size*model_cfg.scale})"
+                )
+            if sampler is not None:
+                sampler.set_epoch(step)
+            iter_loader = iter(DataLoader(
+                train_dataset,
+                batch_size=ds_cfg.batch_size // world_size,
+                sampler=sampler,
+                num_workers=ds_cfg.get('num_workers', 4),
+                pin_memory=True,
+                drop_last=True,
+            ))
+
         # Get next batch (cycle through dataloader)
         try:
             batch = next(iter_loader)

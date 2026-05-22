@@ -1,6 +1,11 @@
 name: hydra_sr_stage1_geometry
-description: "Stage 1 — Geometry Lock. 400K iterations, bicubic degradation, Charbonnier loss."
+description: >
+  Stage 1 — Geometry Lock.
+  400K iterations, bicubic degradation, Charbonnier + DegradationPredictor loss.
+  Dataset: DF2K (DIV2K + Flickr2K) + LSDIR (~88,000 HR images total).
+  All SOTA augmentations enabled: D4 dihedral + RGB channel shuffle + CutBlur.
 
+# ─── Model ───────────────────────────────────────────────────────────────────
 model:
   scale: 4
   dim_p: 96
@@ -12,70 +17,101 @@ model:
   prompt_dim: 128
   J: 2
   wave: db4
-  use_checkpoint: true   # MANDATORY for 16GB cards at batch=8
+  use_checkpoint: true   # Mandatory for 16 GB cards at batch=8
 
+# ─── Training ────────────────────────────────────────────────────────────────
 train:
-  dataset:
-    hr_root: /data/DF2K/HR
-    lr_root:  /data/DF2K/LR_bicubic/X4
-    patch_size: 64       # Stage 1 starts at 64, progresses to 96→128
-    scale: 4
-    batch_size: 32
-    num_workers: 8
-    use_real_degradation: false
-    real_deg_weight: 0.1   # 10% real even in Stage 1 to warm up degradation predictor
-
   total_iter: 400000
 
+  # Dataset ─────────────────────────────────────────────────────────────────
+  dataset:
+    # DF2K + LSDIR layout:
+    #   HR/
+    #     DIV2K_train_HR/
+    #     Flickr2K_HR/
+    #     LSDIR_HR/
+    #   LR_bicubic/X4/
+    #     DIV2K_train_LR_bicubic_X4/
+    #     Flickr2K_LR_bicubic_X4/
+    #     LSDIR_LR_bicubic_X4/
+    hr_root:  /data/DF2K_LSDIR/HR
+    lr_root:  /data/DF2K_LSDIR/LR_bicubic/X4
+
+    patch_size: 64         # Starting LR patch size — overridden by curriculum below
+    scale: 4
+    batch_size: 32         # Effective batch; DDP splits this across GPUs
+    num_workers: 8
+    use_real_degradation: false
+    real_deg_weight: 0.1   # 10% real samples to warm up DegradationPredictor
+
+    # ── Augmentations ──────────────────────────────────────────────────────
+    # All are True by default; set False to ablate individually.
+    augmentation:
+      use_hflip: true            # Horizontal flip (50% prob)
+      use_vflip: true            # Vertical flip (50% prob)       ← SSM bidirectional
+      use_rotation: true         # Random 90° rotation (D4 group)
+      use_channel_shuffle: true  # RGB channel permutation (50% prob) ← SOTA addition
+      use_cutblur: true          # CutBlur difficulty curriculum (30% prob)
+      cutblur_prob: 0.3
+
+  # Progressive Patch Curriculum (LR patch size) ──────────────────────────────
+  # Implemented in DIV2KDataset.set_iter() — train.py calls this each step.
+  patch_curriculum:
+    - {iter: 0,       patch_size: 64}    # Steps    0 – 149K : 64×64 LR / 256×256 HR
+    - {iter: 150000,  patch_size: 96}    # Steps 150K – 299K : 96×96 LR / 384×384 HR
+    - {iter: 300000,  patch_size: 128}   # Steps 300K – 400K: 128×128 LR / 512×512 HR
+
+  # Optimizer ─────────────────────────────────────────────────────────────────
   optimizer:
     type: AdamW
     lr: 2.0e-4
     betas: [0.9, 0.99]
     weight_decay: 1.0e-4
-    mamba_weight_decay: 1.0e-5   # Differential WD: Mamba params get 10× lower WD
+    mamba_weight_decay: 1.0e-5   # 10× lower WD for SSM params (Δ, A, B, C)
 
+  # Scheduler ─────────────────────────────────────────────────────────────────
   scheduler:
     type: CosineAnnealing
     eta_min: 1.0e-6
     warmup_iter: 10000
     warmup_lr: 1.0e-6
 
+  # Loss ───────────────────────────────────────────────────────────────────────
   loss:
     charbonnier: 1.0
-    degradation_pred: 0.1   # supervision for DegradationPredictor
+    degradation_pred: 0.1   # Supervision weight for DegradationPredictor head
 
+  # EMA ────────────────────────────────────────────────────────────────────────
   ema:
     decay: 0.999
     update_every: 1
     start_step: 0
 
+  # Gradient Clipping ──────────────────────────────────────────────────────────
   grad_clip:
     max_norm: 1.0
-    mamba_max_norm: 1.0   # separate clip for SSM params
+    mamba_max_norm: 1.0    # Independent clip for SSM params
 
-  # CutBlur patch curriculum (from implementation plan)
-  patch_curriculum:
-    - {iter: 0,      patch_size: 64}
-    - {iter: 150000, patch_size: 96}
-    - {iter: 300000, patch_size: 128}
-
-  # CDB warmup: clamp lam_p, lam_w to [0, 0] for first 5K iters
+  # CDB warmup — suppress cross-domain bridge for first 5K iters (NaN prevention)
   cdb_warmup_iters: 5000
 
+  # AMP ────────────────────────────────────────────────────────────────────────
   amp:
     enabled: true
-    dtype: bfloat16   # bf16 is MORE stable than fp16 for SSMs
+    dtype: bfloat16    # BF16 = same dynamic range as FP32 → no GradScaler needed
 
+# ─── Validation ──────────────────────────────────────────────────────────────
 val:
   dataset:
-    hr_root: /data/DIV2K/valid_HR
-    lr_root:  /data/DIV2K/valid_LR_bicubic/X4
-    patch_size: null   # full image validation
+    hr_root: /data/DIV2K/DIV2K_valid_HR
+    lr_root: /data/DIV2K/DIV2K_valid_LR_bicubic/X4
+    patch_size: null    # Full-image validation (no crop)
     scale: 4
   every: 5000
   metrics: [psnr_y, ssim_y]
-  target_psnr: 32.5   # acceptance criterion for Week 4
+  target_psnr: 32.5    # Week 4 acceptance criterion (Set5/BSD100 PSNR-Y)
 
+# ─── Logging ─────────────────────────────────────────────────────────────────
 logging:
   save_every: 10000
   log_every: 100

@@ -456,11 +456,26 @@ class DIV2KDataset(Dataset):
         # ── Optional real-degradation pipeline ──────────────────────────────
         self.real_deg = None
         if use_real_degradation:
+            RealESRGANDegradation = None
+            # Try relative import first (normal package usage)
             try:
                 from .degradations import RealESRGANDegradation
-                self.real_deg = RealESRGANDegradation(scale=scale)
             except ImportError:
-                print("WARNING: degradations.py not found — disabling real degradation.")
+                pass
+            # Fallback: absolute import (standalone scripts / pytest from repo root)
+            if RealESRGANDegradation is None:
+                try:
+                    from hydra_sr.data.degradations import RealESRGANDegradation
+                except ImportError:
+                    pass
+            if RealESRGANDegradation is not None:
+                self.real_deg = RealESRGANDegradation(scale=scale)
+            else:
+                print(
+                    "WARNING: Could not import RealESRGANDegradation "
+                    "(tried .degradations and hydra_sr.data.degradations). "
+                    "Real degradation is disabled for this dataset instance."
+                )
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -535,13 +550,15 @@ class DIV2KDataset(Dataset):
             hr, lr = paired_random_crop(hr, lr, hr_patch_size, self.scale)
 
             # 2–5. D4 geometry + RGB channel shuffle
-            hr, lr = augment(
+            # Explicit unpack prevents silent bugs if augment() changes its return length.
+            aug_results = augment(
                 [hr, lr],
                 hflip=self.use_hflip,
                 vflip=self.use_vflip,
                 rotation=self.use_rotation,
                 channel_shuffle=self.use_channel_shuffle,
             )
+            hr, lr = aug_results[0], aug_results[1]
 
             # 6. CutBlur — teaches difficulty-awareness in SR
             if self.use_cutblur:

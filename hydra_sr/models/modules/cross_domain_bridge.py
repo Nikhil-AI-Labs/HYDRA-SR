@@ -104,18 +104,31 @@ class CrossDomainBridge(nn.Module):
         """
         Stack all DWT subbands into a single tensor along the channel dim.
 
+        pytorch_wavelets returns a spatial pyramid, not same-size tensors:
+            yl:    (B, C, H/4, W/4) — deepest LL
+            yh[0]: (B, C, 3, H/2, W/2) — level-1 details (FINER)
+            yh[1]: (B, C, 3, H/4, W/4) — level-2 details (COARSER)
+
+        We canonicalise to H/4 (the yl resolution) by avg-pooling any
+        finer-level subbands. This matches the wavelet stream spatial size
+        and avoids RuntimeError on torch.cat.
+
         Args:
-            yl: (B, C, H', W')        — low-frequency approximation
-            yh: list of (B, C, 3, H', W') — high-freq details at each level
+            yl: (B, C, H/4, W/4)
+            yh: list of (B, C, 3, H', W') — H' may differ across levels
 
         Returns:
-            stacked: (B, C*(1+3J), H', W')
+            stacked: (B, C*(1+3J), H/4, W/4)
         """
+        target_h, target_w = yl.shape[-2], yl.shape[-1]
         parts = [yl]
         for yh_level in yh:
-            # yh_level: (B, C, 3, H', W') → 3 × (B, C, H', W')
             for k in range(3):
-                parts.append(yh_level[:, :, k, :, :])
+                subband = yh_level[:, :, k, :, :]  # (B, C, H', W')
+                if subband.shape[-2] != target_h or subband.shape[-1] != target_w:
+                    stride = subband.shape[-1] // target_w
+                    subband = F.avg_pool2d(subband, kernel_size=stride)
+                parts.append(subband)
         return torch.cat(parts, dim=1)
 
     def _dwt_or_pool(self, F_P: torch.Tensor) -> torch.Tensor:

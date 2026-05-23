@@ -91,7 +91,7 @@ class DegradationPredictor(nn.Module):
             d_hat: (B, 4)          — predicted degradation parameters.
             p_d:   (B, prompt_dim) — degradation prompt for FiLM.
         """
-        f = self.backbone(lr)       # (B, 128)
-        d_hat = self.head_d(f)      # (B, 4)
-        p_d   = self.head_p(f)      # (B, prompt_dim)
+        f = self.backbone(lr)              # (B, 128)
+        d_hat = self.head_d(f).sigmoid()   # (B, 4) in [0, 1] — matches normalized deg_vec
+        p_d   = self.head_p(f)             # (B, prompt_dim)
         return d_hat, p_d

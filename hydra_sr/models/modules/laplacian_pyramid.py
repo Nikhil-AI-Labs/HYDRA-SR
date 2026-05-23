@@ -49,8 +49,11 @@ class LaplacianPyramidSharpening(nn.Module):
             nn.init.eye_(m.weight.view(channels, channels))
             nn.init.zeros_(m.bias)
 
-        # Learnable global sharpening strength per level
-        self.level_weights = nn.Parameter(torch.zeros(levels))
+        # Learnable global sharpening strength per level.
+        # INIT: -10 → sigmoid(-10) ≈ 4.5e-5 ≈ 0 → identity at iter 0.
+        # DO NOT init to 0: sigmoid(0) = 0.5 → adds 50% of each Laplacian band
+        # immediately, causing ~2× output amplitude and training instability.
+        self.level_weights = nn.Parameter(torch.full((levels,), -10.0))
 
     def _gaussian_blur(self, x: torch.Tensor) -> torch.Tensor:
         """Simple 5×5 Gaussian blur for pyramid construction."""

@@ -150,10 +150,27 @@ class TSDDistillLoss(nn.Module):
             eps_pred = self.teacher(z_t_sr, t)
             return F.mse_loss(eps_pred, eps_target) * self.loss_weight
 
-        # Cached path: eps_target already contains teacher score on HR
-        # z_t_sr already has gradient from sr → vae.encode → q_sample
-        # The loss signal propagates: loss → z_t_sr → z_sr → vae → sr ← HYDRASR
-        return F.mse_loss(z_t_sr, eps_target.detach()) * self.loss_weight
+        # Cached path — mathematical note:
+        # The correct TSD loss is MSE(ε_θ(z_t_sr, t), eps_target), where both
+        # sides are NOISE PREDICTIONS. Comparing z_t_sr (noised latent, scale≈1)
+        # directly to eps_target (unit Gaussian noise prediction) is wrong:
+        # z_t_sr ≠ ε_θ(z_t_sr, t).
+        #
+        # Without a live teacher call on z_t_sr, we cannot compute the true TSD
+        # loss from cache alone. The SimpleTSDLoss (LPIPS proxy) is mathematically
+        # correct and is already implemented — it's the right choice for Stage 3
+        # when the full SD3 teacher is not available at training time.
+        #
+        # If you have cached (eps_target_hr, z_t_hr) from the teacher, the correct
+        # approach is to run the teacher on z_t_sr (derived from sr) and compare to
+        # the cached eps_target_hr. That requires the teacher in GPU memory during
+        # training, which is expensive but correct. For HYDRA-SR Stage 3, we defer
+        # to SimpleTSDLoss (LPIPS) as the primary perceptual loss instead.
+        raise RuntimeError(
+            "TSDDistillLoss cached path requires a live teacher call on z_t_sr. "
+            "Use SimpleTSDLoss (LPIPS proxy) for Stage 3 training without a live teacher, "
+            "or pass teacher= and set use_cached=False for ablation."
+        )
 
     def forward(
         self,

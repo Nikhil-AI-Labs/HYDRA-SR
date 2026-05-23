@@ -112,12 +112,17 @@ class FreqGatedUpsampler(nn.Module):
 
         # Hard regions (high difficulty) → pixel-shuffle output (more detail)
         # Easy regions (low difficulty) → bicubic (color-preserving)
+        #
+        # CORRECT formulation: sr = bicubic + correction
+        #   where correction = alpha * diff_map * (ps_out - bicubic)
+        # This guarantees:
+        #   - smooth regions (diff_map ≈ 0): sr = bicubic  (exactly, no drift)
+        #   - hard regions (diff_map ≈ 1):   sr = bicubic + alpha*(ps_out - bicubic)
+        #
+        # WRONG old code: sr = (alpha*diff)*ps_out + (1-alpha*diff)*bicubic + 0.1*bicubic
+        # In smooth regions: sr = 0 + 1*bicubic + 0.1*bicubic = 1.1*bicubic  ← 10% drift!
         alpha = self.blend_alpha.clamp(0.0, 1.0)
-        sr = (alpha * diff_map_hr) * ps_out + (1.0 - alpha * diff_map_hr) * bicubic_hr
-
-        # ── Global bicubic residual ───────────────────────────────────────
-        # Always add bicubic as base: prevents color drift (Failure Mode #8)
-        # The network's output is interpreted as a correction over bicubic.
-        sr = sr + bicubic_hr * 0.1  # small weight: network learns most of the content
+        correction = alpha * diff_map_hr * (ps_out - bicubic_hr)
+        sr = bicubic_hr + correction
 
         return sr

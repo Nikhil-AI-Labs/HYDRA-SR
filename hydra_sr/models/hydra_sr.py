@@ -59,15 +59,35 @@ except ImportError:
 
 def _stack_wavelet_subbands(yl: torch.Tensor, yh: list) -> torch.Tensor:
     """
-    Stack all DWT subbands into channel dimension.
-    yl:  (B, C, H', W')
-    yh:  list of (B, C, 3, H', W')   [level-2 first, level-1 last]
-    Returns: (B, C*(1+3J), H', W')
+    Stack all DWT subbands into channel dimension at the deepest-level resolution.
+
+    pytorch_wavelets DWTForward(J=2) returns a PYRAMID — NOT same-size tensors:
+        yl:    (B, C, H/4, W/4)  — deepest LL approximation
+        yh[0]: (B, C, 3, H/2, W/2) — level-1 LH/HL/HH details (FINEST)
+        yh[1]: (B, C, 3, H/4, W/4) — level-2 LH/HL/HH details (COARSEST)
+
+    We adopt H/4 as the canonical spatial size (matches the wavelet stream
+    resolution in HYDRA-SR). Level-1 subbands are downsampled via avg-pool
+    before stacking — this preserves their energy without introducing learned
+    parameters, and is the standard approach in multi-scale wavelet CNNs.
+
+    Returns: (B, C*(1+3J), H/4, W/4)
     """
+    # Target spatial size = deepest level (yl)
+    target_h, target_w = yl.shape[-2], yl.shape[-1]
+
     parts = [yl]
     for yh_level in yh:
+        # yh_level: (B, C, 3, H', W')
         for k in range(3):
-            parts.append(yh_level[:, :, k, :, :])
+            subband = yh_level[:, :, k, :, :]   # (B, C, H', W')
+            if subband.shape[-2] != target_h or subband.shape[-1] != target_w:
+                # Downsample finer-level subbands to the canonical H/4 size
+                subband = F.avg_pool2d(
+                    subband,
+                    kernel_size=subband.shape[-1] // target_w,  # integer stride
+                )
+            parts.append(subband)
     return torch.cat(parts, dim=1)
 
 
@@ -206,7 +226,16 @@ class HYDRASR(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        """Standard weight initialization following NAFNet/SwinIR convention."""
+        """
+        Weight initialization following NAFNet/SwinIR convention.
+
+        IMPORTANT — init order:
+        The generic trunc_normal_(std=0.02) loop below would overwrite the
+        carefully zeroed FiLM/offset/head_d weights that are needed for
+        training stability (identity start, no FiLM shift at iter 0).
+        We therefore re-apply those targeted zero-inits AFTER the generic loop.
+        """
+        # ── Generic init ────────────────────────────────────────────────────
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -216,9 +245,34 @@ class HYDRASR(nn.Module):
                 nn.init.trunc_normal_(m.weight, std=0.02)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-            elif isinstance(m, (nn.LayerNorm,)):
+            elif isinstance(m, nn.LayerNorm):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
+
+        # ── Stability priming — re-apply AFTER generic loop ─────────────────
+        # FiLM proj: must be zero so FiLM(x, p) = x at iter 0 (no shift/scale)
+        for name, m in self.named_modules():
+            if 'film' in name.lower() and hasattr(m, 'proj'):
+                if isinstance(m.proj, nn.Linear):
+                    nn.init.zeros_(m.proj.weight)
+                    if m.proj.bias is not None:
+                        nn.init.zeros_(m.proj.bias)
+            # AHN-Mamba FiLM conditioning projection
+            if name.endswith('film_proj') and isinstance(m, nn.Linear):
+                nn.init.zeros_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            # Offset predictor last layer: offsets must be zero at iter 0
+            if 'offset_predictor' in name and isinstance(m, nn.Sequential):
+                last = m[-1]
+                if isinstance(last, nn.Linear):
+                    nn.init.zeros_(last.weight)
+                    nn.init.zeros_(last.bias)
+        # DegradationPredictor heads: small xavier (not std=0.02 which is too large)
+        nn.init.xavier_uniform_(self.deg_pred.head_d.weight, gain=0.1)
+        nn.init.zeros_(self.deg_pred.head_d.bias)
+        nn.init.xavier_uniform_(self.deg_pred.head_p.weight, gain=0.1)
+        nn.init.zeros_(self.deg_pred.head_p.bias)
 
     def _dwt_input(self, lr: torch.Tensor) -> torch.Tensor:
         """

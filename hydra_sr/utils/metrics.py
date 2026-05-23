@@ -19,12 +19,26 @@ import numpy as np
 
 def rgb_to_y(img: torch.Tensor) -> torch.Tensor:
     """
-    Convert RGB tensor to Y channel (luminance) using BT.601 coefficients.
-    img: (B, 3, H, W) in [0, 1]
-    Returns: (B, 1, H, W)
+    Convert linear RGB tensor to Y channel (BT.601 luminance).
+
+    Args:
+        img: (B, 3, H, W) float32 in [0, 1].
+    Returns:
+        y:   (B, 1, H, W) in [16/255, 235/255]  (standard Y range).
+
+    Formula (BT.601, studio swing):
+        Y = (65.481*R + 128.553*G + 24.966*B) / 255  +  16/255
+
+    Both the coefficients and the offset are divided by 255 so that
+    input [0,1] maps to output [16/255, 235/255].  This is the form
+    used by MATLAB's rgb2ycbcr and by every NTIRE evaluation script.
+
+    COMMON BUG: writing `+ 16.0/255.0` when the coefficients still
+    operate on [0,255] scale gives wrong output.  The safe version here
+    keeps EVERYTHING on the [0,1] scale.
     """
     r, g, b = img[:, 0:1], img[:, 1:2], img[:, 2:3]
-    y = 65.481 * r + 128.553 * g + 24.966 * b + 16.0 / 255.0
+    y = (65.481 * r + 128.553 * g + 24.966 * b) / 255.0 + 16.0 / 255.0
     return y
 
 
@@ -32,26 +46,30 @@ def compute_psnr_y(
     sr: torch.Tensor,
     hr: torch.Tensor,
     scale: int = 4,
-    max_val: float = 255.0,
+    max_val: float = 1.0,
 ) -> float:
     """
     PSNR-Y: PSNR on Y channel with border crop.
 
     Args:
-        sr:    (B, 3, H, W) float [0, 1]
-        hr:    (B, 3, H, W) float [0, 1]
-        scale: SR scale factor (determines border crop size)
-        max_val: pixel value range (255.0 for standard PSNR)
-    """
-    crop = scale // 2
+        sr:      (B, 3, H, W) float in [0, 1]
+        hr:      (B, 3, H, W) float in [0, 1]
+        scale:   SR scale factor (border crop = scale pixels per side)
+        max_val: dynamic range (1.0 for [0,1] inputs)
 
-    sr_y = rgb_to_y(sr * 255.0)[:, :, crop:-crop, crop:-crop]
-    hr_y = rgb_to_y(hr * 255.0)[:, :, crop:-crop, crop:-crop]
+    NTIRE border convention: crop `scale` pixels on each side (not scale//2).
+    """
+    # Border crop: NTIRE uses `scale` pixels (not scale//2)
+    crop = scale
+
+    # rgb_to_y expects [0,1] — do NOT multiply by 255 first
+    sr_y = rgb_to_y(sr.clamp(0, 1))[:, :, crop:-crop, crop:-crop]
+    hr_y = rgb_to_y(hr.clamp(0, 1))[:, :, crop:-crop, crop:-crop]
 
     mse = ((sr_y - hr_y) ** 2).mean()
     if mse == 0:
         return float('inf')
-    psnr = 10 * torch.log10(torch.tensor(max_val ** 2) / mse)
+    psnr = 10 * torch.log10(torch.tensor(max_val ** 2, dtype=mse.dtype) / mse)
     return psnr.item()
 
 
@@ -60,17 +78,20 @@ def compute_ssim_y(
     hr: torch.Tensor,
     scale: int = 4,
     window_size: int = 11,
-    C1: float = (0.01 * 255) ** 2,
-    C2: float = (0.03 * 255) ** 2,
+    C1: float = (0.01) ** 2,     # C1 on [0,1] scale  (= (0.01*255)^2 / 255^2)
+    C2: float = (0.03) ** 2,     # C2 on [0,1] scale
 ) -> float:
     """
     SSIM-Y: SSIM on Y channel with border crop.
     Implements the standard SSIM formula with 11×11 Gaussian window.
-    """
-    crop = scale // 2
 
-    sr_y = rgb_to_y(sr * 255.0)[:, :, crop:-crop, crop:-crop]
-    hr_y = rgb_to_y(hr * 255.0)[:, :, crop:-crop, crop:-crop]
+    Constants C1, C2 are on [0,1] scale (matching max_val=1.0).
+    """
+    crop = scale
+
+    # rgb_to_y expects [0,1] — do NOT multiply by 255 first
+    sr_y = rgb_to_y(sr.clamp(0, 1))[:, :, crop:-crop, crop:-crop]
+    hr_y = rgb_to_y(hr.clamp(0, 1))[:, :, crop:-crop, crop:-crop]
 
     # Gaussian window
     import math

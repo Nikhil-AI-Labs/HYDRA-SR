@@ -25,17 +25,11 @@ train:
 
   # Dataset ─────────────────────────────────────────────────────────────────
   dataset:
-    # DF2K + LSDIR layout:
-    #   HR/
-    #     DIV2K_train_HR/
-    #     Flickr2K_HR/
-    #     LSDIR_HR/
-    #   LR_bicubic/X4/
-    #     DIV2K_train_LR_bicubic_X4/
-    #     Flickr2K_LR_bicubic_X4/
-    #     LSDIR_LR_bicubic_X4/
-    hr_root:  /data/DF2K_LSDIR/HR
-    lr_root:  /data/DF2K_LSDIR/LR_bicubic/X4
+    # Unified flat layout (DF2K + LSDIR consolidated):
+    #   data/train_HR/   — all HR training images
+    #   data/train_LR/   — all LR×4 training images (bicubic)
+    hr_root:  ./data/train_HR
+    lr_root:  ./data/train_LR
 
     patch_size: 64         # Starting LR patch size — overridden by curriculum below
     scale: 4
@@ -103,8 +97,8 @@ train:
 # ─── Validation ──────────────────────────────────────────────────────────────
 val:
   dataset:
-    hr_root: /data/DIV2K/DIV2K_valid_HR
-    lr_root: /data/DIV2K/DIV2K_valid_LR_bicubic/X4
+    hr_root: ./data/val_HR
+    lr_root: ./data/val_LR
     patch_size: null    # Full-image validation (no crop)
     scale: 4
   every: 5000

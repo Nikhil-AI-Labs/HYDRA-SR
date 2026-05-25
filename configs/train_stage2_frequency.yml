@@ -18,7 +18,7 @@ model:
 
 train:
   dataset:
-    hr_root: /data/DF2K_LSDIR/HR
+    hr_root: ./data/train_HR
     lr_root:  null              # LR generated on-the-fly (real degradation)
     patch_size: 64
     scale: 4
@@ -63,8 +63,8 @@ train:
 
 val:
   dataset:
-    hr_root: /data/DIV2K/valid_HR
-    lr_root:  null     # real degradation for val too
+    hr_root: ./data/val_HR
+    lr_root: ./data/val_LR     # pre-computed val LR for consistent PSNR benchmarking
     scale: 4
   every: 5000
   metrics: [psnr_y, ssim_y, lpips]

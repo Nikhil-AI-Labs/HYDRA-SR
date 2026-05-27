@@ -145,6 +145,7 @@ def train(cfg, args):
         J=model_cfg.get('J', 2),
         wave=model_cfg.get('wave', 'db4'),
         use_checkpoint=model_cfg.get('use_checkpoint', True),
+        upsampler_mid_dim=model_cfg.get('upsampler_mid_dim', 64),
     ).to(device)
 
     if is_main:

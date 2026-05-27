@@ -3,10 +3,10 @@ description: "Stage 2 — Frequency Lock. 250K iterations, mixed real degradatio
 
 model:
   scale: 4
-  dim_p: 160
-  dim_w: 128
-  n_mamba_p: 12
-  n_mamba_w: 8
+  dim_p: 192
+  dim_w: 160
+  n_mamba_p: 14
+  n_mamba_w: 9
   n_nafblocks_s1: 4
   n_transformer: 2
   prompt_dim: 128

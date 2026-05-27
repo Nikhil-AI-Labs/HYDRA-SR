@@ -113,20 +113,17 @@ class HYDRASR(nn.Module):
     def __init__(
         self,
         scale: int = 4,
-        dim_p: int = 160,          # Pixel-stream width (→ 16.9M target)
-        dim_w: int = 128,          # Wavelet-stream width
-        n_mamba_p: int = 12,       # P-stream AHN-Mamba blocks
-        n_mamba_w: int = 8,        # W-stream AHN-Mamba blocks
+        dim_p: int = 192,          # pixel-stream width  (→ 16.9M target)
+        dim_w: int = 160,          # wavelet-stream width
+        n_mamba_p: int = 14,       # P-stream AHN-Mamba blocks
+        n_mamba_w: int = 9,        # W-stream AHN-Mamba blocks
         n_nafblocks_s1: int = 4,
         n_transformer: int = 2,
         prompt_dim: int = 128,
         J: int = 2,
         wave: str = 'db4',
         use_checkpoint: bool = False,
-        upsampler_mid_dim: int = 64,  # PixelShuffle intermediate channels
-                                       # MUST be pinned to 64 (SwinIR/HAT standard).
-                                       # Default mid_dim=in_dim blows the budget:
-                                       # Conv2d(160, 160*16, 3) = 3.69M for ONE layer.
+        upsampler_mid_dim: int = 64,  # PixelShuffle neck  (SwinIR/HAT standard = 64)
     ):
         super().__init__()
 

@@ -8,18 +8,17 @@ description: >
 # ─── Model ───────────────────────────────────────────────────────────────────
 model:
   scale: 4
-  dim_p: 160              # pixel-stream width   → ~16.9M total
-  dim_w: 128              # wavelet-stream width
-  n_mamba_p: 12           # P-stream AHN-Mamba blocks
-  n_mamba_w: 8            # W-stream AHN-Mamba blocks
+  dim_p: 192              # pixel-stream width   → ~17.0M (≈ 16.9M target)
+  dim_w: 160              # wavelet-stream width
+  n_mamba_p: 14           # P-stream AHN-Mamba blocks
+  n_mamba_w: 9            # W-stream AHN-Mamba blocks
   n_nafblocks_s1: 4
   n_transformer: 2
   prompt_dim: 128
   J: 2
   wave: db4
   use_checkpoint: true
-  upsampler_mid_dim: 64   # PixelShuffle neck (SwinIR/HAT standard)
-                           # CRITICAL: default mid_dim=in_dim wastes 3.69M on one conv
+  upsampler_mid_dim: 64   # PixelShuffle neck (SwinIR/HAT standard = 64)
 
 # ─── Training ────────────────────────────────────────────────────────────────
 train:

@@ -137,10 +137,19 @@ class FrequencyRouter(nn.Module):
         feats += [dc, mid, high]
 
         # -- DWT subband energies (4 bands: LL, LH, HL, HH) --
-        # Simple Haar wavelet manually (works without pytorch_wavelets dependency)
-        avg = F.avg_pool2d(x.mean(1, keepdim=True), 2)   # LL
-        diff_h = (x.mean(1, keepdim=True)[:, :, ::2, :] - x.mean(1, keepdim=True)[:, :, 1::2, :]).abs().mean((-1,-2,-3))
-        diff_v = (x.mean(1, keepdim=True)[:, :, :, ::2] - x.mean(1, keepdim=True)[:, :, :, 1::2]).abs().mean((-1,-2,-3))
+        # Simple Haar wavelet manually (works without pytorch_wavelets dependency).
+        # IMPORTANT: strided subtraction (::2 vs 1::2) requires even H and W.
+        # Validation images can have odd dimensions (e.g. H=339 → ::2=170, 1::2=169).
+        # Fix: crop to the nearest even size before the diff — drops at most 1 pixel,
+        # which is negligible for a scalar energy feature computed over hundreds of pixels.
+        x_gray = x.mean(1, keepdim=True)       # (B, 1, H, W)
+        H_e = H - (H % 2)                      # largest even number ≤ H
+        W_e = W - (W % 2)                      # largest even number ≤ W
+        x_he = x_gray[:, :, :H_e, :]           # (B, 1, H_e, W) — even rows
+        x_ve = x_gray[:, :, :, :W_e]           # (B, 1, H, W_e) — even cols
+        avg    = F.avg_pool2d(x_he, 2)         # LL  (B, 1, H_e/2, W_e/2-ish)
+        diff_h = (x_he[:, :, ::2, :] - x_he[:, :, 1::2, :]).abs().mean((-1, -2, -3))
+        diff_v = (x_ve[:, :, :, ::2] - x_ve[:, :, :, 1::2]).abs().mean((-1, -2, -3))
         feats += [
             avg.mean((-1, -2, -3)),   # LL energy
             diff_h,                   # LH (horizontal details)

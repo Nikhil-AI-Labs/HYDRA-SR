@@ -368,13 +368,15 @@ class HYDRASR(nn.Module):
         r_w = routing[:, 1].view(B, 1, 1, 1)
         r_t = routing[:, 2].view(B, 1, 1, 1)
 
-        # Project W-stream to pixel resolution for merging
+        # Project W-stream to pixel resolution for merging.
+        # Use size= (not scale_factor=4) to avoid ±2px rounding on odd-sized inputs.
         f_w_up = F.interpolate(
             self.w_to_p_proj(f_w),
-            scale_factor=4,
+            size=(f_p.shape[-2], f_p.shape[-1]),
             mode='bilinear',
             align_corners=False,
-        )  # (B, dim_p, H, W)
+        )  # (B, dim_p, H, W) — exactly aligned with f_p
+
 
         # Frequency-weighted merge of P and W streams
         f_merged = r_p * f_p + r_w * f_w_up   # (B, dim_p, H, W)

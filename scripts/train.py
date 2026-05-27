@@ -351,10 +351,74 @@ def train(cfg, args):
 
         # ── Validation ───────────────────────────────────────────────
         if is_main and step % val_every == 0 and step > 0:
+            import time
+            t0 = time.time()
             ema.ema_model.eval()
             val_metric.reset()
-            # (val_loader would go here — omitted for brevity, same structure as train)
-            logger.info(f"Step {step}: validation completed")
+
+            # Build val loader (once per validation call — cheap, ~100 images)
+            val_ds_cfg = cfg.val.dataset
+            val_dataset = DIV2KDataset(
+                hr_root=val_ds_cfg.hr_root,
+                lr_root=val_ds_cfg.get('lr_root', None),
+                patch_size=None,          # full-image validation
+                scale=model_cfg.scale,
+                train=False,
+                use_real_degradation=False,
+                real_deg_weight=0.0,
+            )
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=1,             # full-res images vary in size — batch=1
+                shuffle=False,
+                num_workers=2,
+                pin_memory=True,
+            )
+
+            with torch.no_grad():
+                for val_batch in val_loader:
+                    val_lr = val_batch['lr'].to(device, non_blocking=True)
+                    val_hr = val_batch['hr'].to(device, non_blocking=True)
+                    with (torch.amp.autocast('cuda', dtype=amp_dtype)
+                          if use_amp and device.type == 'cuda'
+                          else contextlib.nullcontext()):
+                        val_sr, _ = ema.ema_model(val_lr, return_aux=True)
+                    val_metric.update(
+                        val_sr.float().clamp(0, 1),
+                        val_hr.float().clamp(0, 1),
+                    )
+
+            metrics = val_metric.compute()
+            elapsed = time.time() - t0
+
+            # Format and log metrics
+            psnr  = metrics.get('psnr_y',  float('nan'))
+            ssim  = metrics.get('ssim_y',  float('nan'))
+            lpips = metrics.get('lpips',   float('nan'))
+
+            logger.info(
+                f"\n{'='*60}\n"
+                f"  VALIDATION @ step {step:,}/{total_iter:,}  ({elapsed:.1f}s)\n"
+                f"  PSNR-Y : {psnr:.4f} dB\n"
+                f"  SSIM-Y : {ssim:.6f}\n"
+                f"  LPIPS  : {lpips:.6f}\n"
+                f"{'='*60}"
+            )
+
+            # Track best and save best_ema checkpoint
+            if not hasattr(train, '_best_psnr'):
+                train._best_psnr = 0.0
+            if psnr > train._best_psnr:
+                train._best_psnr = psnr
+                best_path = checkpoint_dir / 'best_ema.pth'
+                torch.save({
+                    'step':       step,
+                    'model':      ema.ema_model.state_dict(),
+                    'metrics':    metrics,
+                    'cfg':        OmegaConf.to_container(cfg),
+                }, best_path)
+                logger.info(f"  ★ New best PSNR-Y {psnr:.4f} dB — saved {best_path}")
+
             ema.ema_model.train()
 
         # ── Save checkpoint ──────────────────────────────────────────

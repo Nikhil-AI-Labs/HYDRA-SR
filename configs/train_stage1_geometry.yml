@@ -32,9 +32,9 @@ train:
     hr_root:  ./data/train_HR
     lr_root:  ./data/train_LR
 
-    patch_size: 64         # Starting LR patch size — overridden by curriculum below
+    patch_size: 96         # Starting LR patch size — overridden by curriculum below
     scale: 4
-    batch_size: 16         # Reduced from 32: larger model needs more VRAM per sample
+    batch_size: 32         # Increased to 32 to utilize H100 93GB VRAM (more stable gradients)
     num_workers: 8
     use_real_degradation: false
     real_deg_weight: 0.1   # 10% real samples to warm up DegradationPredictor
@@ -52,9 +52,9 @@ train:
   # Progressive Patch Curriculum (LR patch size) ──────────────────────────────
   # Implemented in DIV2KDataset.set_iter() — train.py calls this each step.
   patch_curriculum:
-    - {iter: 0,       patch_size: 64}    # Steps    0 – 149K : 64×64 LR / 256×256 HR
-    - {iter: 150000,  patch_size: 96}    # Steps 150K – 299K : 96×96 LR / 384×384 HR
-    - {iter: 300000,  patch_size: 128}   # Steps 300K – 400K: 128×128 LR / 512×512 HR
+    - {iter: 0,       patch_size: 96}    # Steps    0 – 149K : 96×96 LR / 384×384 HR
+    - {iter: 150000,  patch_size: 128}   # Steps 150K – 299K : 128×128 LR / 512×512 HR
+    - {iter: 300000,  patch_size: 160}   # Steps 300K – 400K: 160×160 LR / 640×640 HR
 
   # Optimizer ─────────────────────────────────────────────────────────────────
   optimizer:

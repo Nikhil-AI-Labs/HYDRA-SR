@@ -167,17 +167,24 @@ class CrossDomainBridge(nn.Module):
 
         # ── P → W: inject pixel-domain structure into wavelet stream ───
         stacked = self._dwt_or_pool(F_P)          # (B, C_P*(1+3J), H/4, W/4)
+        # DWT of F_P may round differently from the original wavelet stream.
+        # e.g. F_P=510px → DWT(F_P) LL = 128px, but F_W = 127px.
+        # Clamp to exactly match F_W spatial size so cat/add doesn't crash.
+        if stacked.shape[-2:] != F_W.shape[-2:]:
+            stacked = F.adaptive_avg_pool2d(stacked, F_W.shape[-2:])
         F_W_new = F_W + lam_w * self.p2w_conv(stacked)
 
         # ── W → P: inject wavelet-domain features into pixel stream ────
-        # Project channels and bilinear upsample to pixel-stream resolution
+        # Project channels then upsample to EXACTLY F_P's spatial size.
+        # Using scale_factor=4 causes ±2px errors when H is not divisible by 4
+        # (e.g. LR=510 → W-stream H/4=127 → 127*4=508 ≠ 510).
         f_w_proj = self.w2p_conv(F_W)             # (B, C_P, H/4, W/4)
         f_w_up = F.interpolate(
             f_w_proj,
-            scale_factor=4,
+            size=(F_P.shape[-2], F_P.shape[-1]),  # exact target — no rounding error
             mode='bilinear',
             align_corners=False,
-        )                                          # (B, C_P, H, W)
+        )                                          # (B, C_P, H, W) — guaranteed match
         F_P_new = F_P + lam_p * f_w_up
 
         return F_P_new, F_W_new

@@ -23,8 +23,8 @@ train:
     lr_root:  null              # LR generated on-the-fly (real degradation)
     patch_size: 96
     scale: 4
-    batch_size: 32         # Increased to 32 to utilize H100 93GB VRAM
-    num_workers: 8
+    batch_size: 8          # Reduced to speed up iterations
+    num_workers: 6         # Lowered to 6
     use_real_degradation: true
     real_deg_weight: 1.0    # 100% real degradation in Stage 2
 

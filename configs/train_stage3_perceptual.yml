@@ -23,8 +23,8 @@ train:
     lr_root:  null              # LR generated on-the-fly (real degradation)
     patch_size: 96
     scale: 4
-    batch_size: 24    # increased to 24 to utilize H100 (kept slightly under 32 for TSD overhead)
-    num_workers: 8
+    batch_size: 8     # Reduced to 8 to accelerate iterations
+    num_workers: 6    # Lowered to 6
     use_real_degradation: true
     real_deg_weight: 1.0
 

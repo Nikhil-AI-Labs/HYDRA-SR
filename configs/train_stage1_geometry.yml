@@ -34,8 +34,8 @@ train:
 
     patch_size: 96         # Starting LR patch size — overridden by curriculum below
     scale: 4
-    batch_size: 32         # Increased to 32 to utilize H100 93GB VRAM (more stable gradients)
-    num_workers: 8
+    batch_size: 8          # Reduced to speed up iterations
+    num_workers: 6         # Lowered to 6 as requested
     use_real_degradation: false
     real_deg_weight: 0.1   # 10% real samples to warm up DegradationPredictor
 

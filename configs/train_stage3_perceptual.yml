@@ -21,14 +21,20 @@ train:
   dataset:
     hr_root: ./data/train_HR
     lr_root:  null              # LR generated on-the-fly (real degradation)
-    patch_size: 64
+    patch_size: 96
     scale: 4
-    batch_size: 16    # smaller batch for Stage 3 (TSD adds memory)
+    batch_size: 24    # increased to 24 to utilize H100 (kept slightly under 32 for TSD overhead)
     num_workers: 8
     use_real_degradation: true
     real_deg_weight: 1.0
 
   total_iter: 120000
+
+  # Progressive Patch Curriculum (LR patch size)
+  patch_curriculum:
+    - {iter: 0,       patch_size: 96}    # Steps 0 – 39K
+    - {iter: 40000,   patch_size: 128}   # Steps 40K – 79K
+    - {iter: 80000,   patch_size: 160}   # Steps 80K – 120K
 
   optimizer:
     type: AdamW

@@ -8,16 +8,16 @@ description: >
 # ─── Model ───────────────────────────────────────────────────────────────────
 model:
   scale: 4
-  dim_p: 96
-  dim_w: 64
-  n_mamba_p: 6
-  n_mamba_w: 4
+  dim_p: 128          # was 96  — scaled for 16.9M target
+  dim_w: 96           # was 64
+  n_mamba_p: 8        # was 6   — P-stream AHN-Mamba blocks
+  n_mamba_w: 6        # was 4   — W-stream AHN-Mamba blocks
   n_nafblocks_s1: 4
   n_transformer: 2
   prompt_dim: 128
   J: 2
   wave: db4
-  use_checkpoint: true   # Mandatory for 16 GB cards at batch=8
+  use_checkpoint: true   # Mandatory for 16 GB cards at batch=16
 
 # ─── Training ────────────────────────────────────────────────────────────────
 train:
@@ -33,7 +33,7 @@ train:
 
     patch_size: 64         # Starting LR patch size — overridden by curriculum below
     scale: 4
-    batch_size: 32         # Effective batch; DDP splits this across GPUs
+    batch_size: 16         # Reduced from 32: larger model needs more VRAM per sample
     num_workers: 8
     use_real_degradation: false
     real_deg_weight: 0.1   # 10% real samples to warm up DegradationPredictor

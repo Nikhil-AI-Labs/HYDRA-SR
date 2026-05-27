@@ -113,10 +113,10 @@ class HYDRASR(nn.Module):
     def __init__(
         self,
         scale: int = 4,
-        dim_p: int = 96,
-        dim_w: int = 64,
-        n_mamba_p: int = 6,
-        n_mamba_w: int = 4,
+        dim_p: int = 128,      # Pixel-stream width  (was 96 → 16.9M target)
+        dim_w: int = 96,       # Wavelet-stream width (was 64)
+        n_mamba_p: int = 8,    # P-stream AHN blocks  (was 6)
+        n_mamba_w: int = 6,    # W-stream AHN blocks  (was 4)
         n_nafblocks_s1: int = 4,
         n_transformer: int = 2,
         prompt_dim: int = 128,
@@ -144,11 +144,12 @@ class HYDRASR(nn.Module):
 
         # Stage 2-P: AHN-Mamba global structure (pixel stream)
         # tile=16 for full-resolution pixel stream
+        # expand=4, d_state=32 — 4× channel expansion + 2× state for ~6.5M budget
         self.stage2_p = nn.ModuleList([
             AHNMambaBlock(
                 dim=dim_p,
-                d_state=16,
-                expand=2,
+                d_state=32,
+                expand=4,
                 n_prompts=8,
                 tile=16,
                 prompt_dim=prompt_dim,
@@ -177,13 +178,14 @@ class HYDRASR(nn.Module):
         )
 
         # Stage 2-W: AHN-Mamba on wavelet stream
-        # tile=8: W-stream is already at H/4 spatial resolution, so tiles are smaller
+        # tile=8: W-stream is already at H/4 spatial resolution
+        # expand=4, d_state=32 — same hyperparams as P-stream for budgetary consistency
         # wavelet_delta_bias=True: Δ biased larger for high-freq subband channels
         self.stage2_w = nn.ModuleList([
             AHNMambaBlock(
                 dim=dim_w,
-                d_state=16,
-                expand=2,
+                d_state=32,
+                expand=4,
                 n_prompts=8,
                 tile=8,
                 prompt_dim=prompt_dim,
@@ -214,7 +216,7 @@ class HYDRASR(nn.Module):
             dim=dim_p,
             depth=n_transformer,
             window_size=8,
-            num_heads=max(1, dim_p // 24),
+            num_heads=max(1, dim_p // 16),  # 128//16 = 8 heads
             ffn_expand=4,
             prompt_dim=prompt_dim,
         )

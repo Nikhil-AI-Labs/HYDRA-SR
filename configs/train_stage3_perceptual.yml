@@ -3,10 +3,10 @@ description: "Stage 3 — Perceptual Training. 120K iterations, dynamic TSD+LPIP
 
 model:
   scale: 4
-  dim_p: 96
-  dim_w: 64
-  n_mamba_p: 6
-  n_mamba_w: 4
+  dim_p: 128
+  dim_w: 96
+  n_mamba_p: 8
+  n_mamba_w: 6
   n_nafblocks_s1: 4
   n_transformer: 2
   prompt_dim: 128
